@@ -1,23 +1,39 @@
 from io import TextIOWrapper
-from typing import Any
-from attrs import define, asdict
+from typing import Any, SupportsInt
+
+from attrs import asdict, define
 
 from lambdamoo_db.enums import MooTypes
 
 from . import templates
-from .database import TYPE_MAPPING, VM, Activation, MooDatabase, MooObject, ObjNum, Property, QueuedTask, SuspendedTask, Verb
+from .database import (
+    TYPE_MAPPING,
+    VM,
+    Activation,
+    MooDatabase,
+    MooObject,
+    ObjNum,
+    Property,
+    QueuedTask,
+    SuspendedTask,
+    Verb,
+)
 
 
 @define
 class Writer:
     db: MooDatabase
-    f: TextIOWrapper
+    output_file: TextIOWrapper
 
-    def write(self, text) -> None:
-        self.f.write(text)
+    def write(self, text: str) -> None:
+        self.output_file.write(text)
 
-    def writeInt(self, i: int) -> None:
-        self.write(f"{i: d}")
+    def writeInt(self, i: SupportsInt) -> None:
+        # Guard against bool (which is int subclass but semantically wrong)
+        if isinstance(i, bool):
+            raise TypeError("writeInt() does not accept bool values")
+        # Convert to int and format (works for ints, IntFlag, IntEnum, etc.)
+        self.write(f"{int(i): d}")
 
     def writeString(self, s: str) -> None:
         self.write(f"{s}\n")
@@ -29,36 +45,38 @@ class Writer:
         self.write(f"{f: f}")
 
     def writeBool(self, b: bool) -> None:
-        return self.writeInt(1 if b else 0)
+        self.writeInt(1 if b else 0)
 
-    def writeList(self, l: list[Any]) -> None:
-        return self.writeCollection(l, writer=self.writeValue)
+    def writeList(self, lst: list[Any]) -> None:
+        return self.writeCollection(lst, writer=self.writeValue)
 
-    def writeMap(self, m: dict[str, Any]) -> None:
+    def writeMap(self, m: dict[Any, Any]) -> None:
         def writeMapItem(item):
             key, value = item
-            self.writeString(key)
+            self.writeValue(key)
             self.writeValue(value)
         return self.writeCollection(m.items(), writer=writeMapItem)
 
     def writeValue(self, v: Any) -> None:
-        value_type = type(v)
-        if value_type == int:
-            self.writeInt(v)
-        elif value_type == str:
-            self.writeString(v)
-        elif value_type == ObjNum:
-            self.writeObj(v)
-        elif value_type == float:
-            self.writeFloat(v)
-        elif value_type == bool:
+        # Check bool first since it's a subclass of int
+        if isinstance(v, bool):
             self.writeBool(v)
-        elif value_type == list:
+        elif isinstance(v, ObjNum):
+            self.writeObj(v)
+        elif isinstance(v, int):
+            self.writeInt(v)
+        elif isinstance(v, str):
+            self.writeString(v)
+        elif isinstance(v, float):
+            self.writeFloat(v)
+        elif isinstance(v, list):
             self.writeList(v)
-        elif value_type == dict:
+        elif isinstance(v, dict):
             self.writeMap(v)
+        elif isinstance(v, SupportsInt):
+            self.writeInt(v)
         else:
-            raise Exception("Unknown value type")
+            raise TypeError(f"Unsupported value type: {type(v).__name__}")
 
     def writeDatabase(self) -> None:
         self.writeString(templates.version.format(version=17))
@@ -144,13 +162,6 @@ class Writer:
     def writeClocks(self):
         self.writeCollection(self.db.clocks, templates.clock_count)
 
-    def writeSuspendedTasks(self):
-        self.writeCollection(self.db.suspendedTasks, templates.suspended_task_count, self.writeSuspendedTask)
-
-    def writeSuspendedTask(self, task: SuspendedTask):
-        task_header = templates.suspended_task_header.format(**asdict(task))
-        self.writeString(task_header)
-
     def writeTaskQueue(self):
         self.writeCollection(self.db.queuedTasks, templates.task_count, self.writeQueuedTask)
 
@@ -186,7 +197,7 @@ class Writer:
         self.writeCollection(self.db.suspendedTasks, templates.task_count, self.writeSuspendedTask)
 
     def writeSuspendedTask(self, task: SuspendedTask):
-        header = templates.suspended_task_header.format(asdict(task))
+        header = templates.suspended_task_header.format(**asdict(task))
         self.writeString(header)
         self.writeVM(task.vm)
 
@@ -205,11 +216,11 @@ class Writer:
                 self.writeValue(value)
             self.write("\n")
 
-
     def writeConnections(self):
         # these are not useful
         self.writeCollection([], "{count} active connections")
 
+
 def dump(db: MooDatabase, f: TextIOWrapper) -> None:
-    writer = Writer(db=db, f=f)
+    writer = Writer(db=db, output_file=f)
     writer.writeDatabase()
