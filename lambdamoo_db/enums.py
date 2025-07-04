@@ -1,4 +1,15 @@
+"""
+LambdaMOO Database Enums
+
+This module defines enums used in the LambdaMOO database format. 
+
+IMPORTANT: The numeric values of these enums are persisted in the database format
+and MUST NEVER CHANGE as it would break existing database files. Use IntEnum/IntFlag
+for enums that need to be serialized as integers.
+"""
 import enum
+
+__all__ = ['MooTypes', 'DBVersions', 'PropertyFlags', 'ObjectFlags']
 
 
 class MooTypes(enum.IntEnum):
@@ -12,9 +23,9 @@ class MooTypes(enum.IntEnum):
     _CATCH = 7
     _FINALLY = 8
     FLOAT = 9
-    MAP = (10,)
-    ANON = (12,)
-    WAIF = (13,)
+    MAP = 10
+    ANON = 12
+    WAIF = 13
     BOOL = 14
 
 
@@ -40,21 +51,40 @@ class DBVersions(enum.IntEnum):
     Num_DB_Versions = 18  # Special: the current version is this - 1.
 
 
-class PropertyFlags(enum.Flag):
-    R = 1
-    W = 2
-    C = 4
+class PropertyFlags(enum.IntFlag):
+    NONE = 0
+    READ = 1
+    WRITE = 2
+    CLEAR = 4
+    # Backward compatibility aliases
+    R = READ
+    W = WRITE
+    C = CLEAR
 
 
-class ObjectFlags(enum.Flag):
-    FLAG_USER = 1
-    FLAG_PROGRAMMER = 2
-    FLAG_WIZARD = 4
-    FLAG_OBSOLETE_1 = 8
-    FLAG_READ = 16
-    FLAG_WRITE = 32
-    FLAG_OBSOLETE_2 = 64
-    FLAG_FERTILE = 128
-    FLAG_ANONYMOUS = 256
-    FLAG_INVALID = 512
-    FLAG_RECYCLED = 1024
+class ObjectFlags(enum.IntFlag):
+    NONE = 0
+    USER = 1
+    PROGRAMMER = 2
+    WIZARD = 4
+    OBSOLETE_1 = 8  # Reserved for backward compatibility
+    READ = 16
+    WRITE = 32
+    OBSOLETE_2 = 64  # Reserved for backward compatibility
+    FERTILE = 128
+    ANONYMOUS = 256
+    INVALID = 512
+    RECYCLED = 1024
+    
+    # Backward compatibility aliases
+    FLAG_USER = USER
+    FLAG_PROGRAMMER = PROGRAMMER
+    FLAG_WIZARD = WIZARD
+    FLAG_OBSOLETE_1 = OBSOLETE_1
+    FLAG_READ = READ
+    FLAG_WRITE = WRITE
+    FLAG_OBSOLETE_2 = OBSOLETE_2
+    FLAG_FERTILE = FERTILE
+    FLAG_ANONYMOUS = ANONYMOUS
+    FLAG_INVALID = INVALID
+    FLAG_RECYCLED = RECYCLED
