@@ -6,9 +6,9 @@ from typing import Any, NoReturn, Pattern, Union
 import parse
 
 from . import templates
-from .database import (VM, Activation, Anon, MooDatabase, MooObject, ObjNum,
-                       Property, QueuedTask, SuspendedTask, Verb, Waif,
-                       WaifReference)
+from .database import (CLEAR, VM, Activation, Anon, MooDatabase, MooError,
+                       MooObject, ObjNum, Property, QueuedTask, SuspendedTask,
+                       Verb, Waif, WaifReference)
 from .enums import DBVersions, MooTypes, PropertyFlags
 
 logger = getLogger(__name__)
@@ -123,9 +123,9 @@ class Reader:
             case MooTypes.LIST:
                 return self.readList(db)
             case MooTypes.CLEAR:
-                pass
+                return CLEAR
             case MooTypes.NONE:
-                pass
+                return None
             case MooTypes.MAP:
                 return self.readMap(db)
             case MooTypes.BOOL:
@@ -148,8 +148,8 @@ class Reader:
         """Read an integer from the database file"""
         return int(self.readString())
 
-    def readErr(self) -> int:
-        return self.readInt()
+    def readErr(self) -> MooError:
+        return MooError(self.readInt())
 
     def readFloat(self) -> float:
         return float(self.readString())
@@ -206,7 +206,11 @@ class Reader:
             self.parse_error("object number does not have #")
 
         if "recycled" in objNumber:
-            logger.debug(f"Skipping recycled object {objNumber}")
+            # Format: "# 112 recycled" - extract the ID and track it
+            parts = objNumber.replace("#", "").split()
+            recycled_id = int(parts[0])
+            db.recycled_objects.add(recycled_id)
+            logger.debug(f"Tracking recycled object {recycled_id}")
             return None
 
         oid = int(objNumber[1:])
@@ -242,7 +246,11 @@ class Reader:
             self.parse_error("object number does not have #")
 
         if "recycled" in objNumber:
-            logger.debug(f"Skipping recycled object {objNumber}")
+            # Format: "# 112 recycled" - extract the ID and track it
+            parts = objNumber.replace("#", "").split()
+            recycled_id = int(parts[0])
+            db.recycled_objects.add(recycled_id)
+            logger.debug(f"Tracking recycled object {recycled_id}")
             return None
 
         oid = int(objNumber[1:])
@@ -250,6 +258,7 @@ class Reader:
         flags = self.readInt()
         owner = self.readObjnum()
         location = self.readValue(db)
+        last_move = -1
         if db.version >= DBVersions.DBV_Last_Move:
             last_move = self.readValue(db)
 
@@ -259,6 +268,9 @@ class Reader:
             parents = [parents]
         children = self.readValue(db)
         obj = MooObject(oid, name, flags, owner, location, parents)
+        obj.last_move = last_move
+        obj.contents = contents
+        obj.children = children
         numVerbs = self.readInt()
         for _ in range(numVerbs):
             self.readVerbMetadata(obj)
@@ -368,17 +380,20 @@ class Reader:
         owner = self.readObjnum()
         perms = self.readInt()
         preps = self.readInt()
-        verb = Verb(name, owner, perms, preps, -1)
+        verb = Verb(name, owner, perms, preps, obj.id)
         obj.verbs.append(verb)
 
     def readProperties(self, db: MooDatabase, obj: MooObject):
         logger.debug(f"Reading properties for {obj.id} {obj.name}")
-        numProperties = self.readInt()
+        # propdefs_count = properties DEFINED on this object (with names)
+        propdefs_count = self.readInt()
+        obj.propdefs_count = propdefs_count
         propertyNames = []
-        for _ in range(numProperties):
+        for _ in range(propdefs_count):
             propertyNames.append(self.readString())
-        numPropdefs = self.readInt()
-        for _ in range(numPropdefs):
+        # nval = total property VALUES (defined + inherited)
+        nval = self.readInt()
+        for _ in range(nval):
             propertyName = None
             if propertyNames:
                 propertyName = propertyNames.pop(0)
@@ -415,8 +430,8 @@ class Reader:
         headerMatch = self._read_and_match(taskHeaderRe, "Could not find task header")
         unused = int(headerMatch[1])
         firstLineno = int(headerMatch[2])
-        st = int(headerMatch[3])
-        id = int(headerMatch[4])
+        id = int(headerMatch[3])
+        st = int(headerMatch[4])
         task = QueuedTask(firstLineno, id, st)
         task.activation = self.read_activation_as_pi(db)
         task.rtEnv = self.readRTEnv(db)
@@ -425,11 +440,14 @@ class Reader:
         db.queuedTasks.append(task)
 
     def read_activation_as_pi(self, db: MooDatabase) -> Activation:
-        _ = self.readValue(db)
+        # Read pre-header values (preserve with type info for round-trip)
+        temp_value = self.readValue(db)
+        temp_this = None
+        temp_vloc = None
         if db.version >= DBVersions.DBV_This:
-            _this = self.readValue(db)
+            temp_this = self.readValue(db)
         if db.version >= DBVersions.DBV_Anon:
-            _vloc = self.readValue(db)
+            temp_vloc = self.readValue(db)
         if db.version >= DBVersions.DBV_Threaded:
             threaded = self.readInt()
         else:
@@ -441,6 +459,11 @@ class Reader:
             self.parse_error("Could not find activation header")
 
         activation = Activation()
+        # Store pre-header values for round-trip
+        activation.temp_value = temp_value
+        activation.temp_this = temp_this
+        activation.temp_vloc = temp_vloc
+        # Parse header values
         activation.this = int(headerMatch[1])
         activation.unused1 = int(headerMatch[2])
         activation.threaded = threaded

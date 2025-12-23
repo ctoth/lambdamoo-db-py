@@ -11,6 +11,27 @@ class Anon(int):
     pass
 
 
+class MooError(int):
+    """Wrapper for MOO error values (TYPE_ERR)."""
+    pass
+
+
+class Clear:
+    """Sentinel for TYPE_CLEAR values (distinct from None/TYPE_NONE)."""
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self):
+        return "CLEAR"
+
+
+CLEAR = Clear()  # Singleton instance
+
+
 @attrs.define()
 class Verb:
     name: str
@@ -18,7 +39,8 @@ class Verb:
     perms: int
     preps: int
     object: int
-    code: list[str] = attrs.field(init=False, factory=list)
+    # None = no program, [] = empty program, [...] = has code
+    code: list[str] | None = attrs.field(init=False, default=None)
 
 
 @attrs.define()
@@ -42,6 +64,7 @@ class MooObject:
     contents: list[int] = attrs.field(init=False, factory=list)
     verbs: list[Verb] = attrs.field(init=False, factory=list)
     properties: list[Property] = attrs.field(init=False, factory=list)
+    propdefs_count: int = attrs.field(init=False, default=0)  # Properties defined on this object (not inherited)
     anon: bool = attrs.field(default=False)
 
     @property
@@ -79,6 +102,10 @@ class Activation:
     unused2 = attrs.field(init=False, default=0)
     unused3 = attrs.field(init=False, default=0)
     unused4 = attrs.field(init=False, default=0)
+    # Pre-header values (preserved for round-trip with type info)
+    temp_value: Any = attrs.field(init=False, default=None)  # First value (often discarded)
+    temp_this: Any = attrs.field(init=False, default=None)   # Pre-header this (with type)
+    temp_vloc: Any = attrs.field(init=False, default=None)   # Pre-header vloc (with type)
 
 
 @attrs.define()
@@ -133,6 +160,8 @@ class MooDatabase:
     suspendedTasks: list[SuspendedTask] = attrs.field(factory=list)
     waifs: dict[int, Waif] = attrs.field(factory=dict)
     players: list[int] = attrs.field(factory=list)
+    recycled_objects: set[int] = attrs.field(factory=set)
+
     def all_verbs(self) -> Generator[Verb, None, None]:
         for obj in self.objects.values():
             for verb in obj.verbs:
