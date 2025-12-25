@@ -4,7 +4,11 @@ from .enums import MooTypes, ObjectFlags, PropertyFlags
 
 
 class ObjNum(int):
-    pass
+    def __str__(self):
+        return f"#{int(self)}"
+
+    def __repr__(self):
+        return f"ObjNum({int(self)})"
 
 
 class Anon(int):
