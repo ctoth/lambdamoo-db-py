@@ -84,7 +84,7 @@ class Reader:
         self.readClocks(db)
         self.readTaskQueue(db)
         self.readSuspendedTasks(db)
-        self.readConnections(db)
+        self.tryReadConnections(db)
 
     def parse_v17(self, db: MooDatabase) -> None:
         logger.debug("Parsing v17 database")
@@ -291,6 +291,23 @@ class Reader:
         count = int(headerMatch.group("count"))
         self._read_and_process_items(db, count, lambda _: self.readString())
         # Read and discard `count` lines; this data is useless to us.
+
+    def tryReadConnections(self, db: MooDatabase) -> bool:
+        """Try to read connections section if present. Returns True if found."""
+        line = self.file.readline()
+        if not line:  # EOF
+            logger.debug("No connections section (EOF)")
+            return False
+        self.line += 1
+        line = line.rstrip("\r\n")
+        match = connectionCountRe.match(line)
+        if not match:
+            logger.debug(f"No connections section (line was: {line!r})")
+            return False
+        count = int(match.group("count"))
+        logger.debug(f"Found connections section with {count} connections")
+        self._read_and_process_items(db, count, lambda _: self.readString())
+        return True
 
     def readVerbs(self, db: MooDatabase) -> None:
         logger.debug(f"Reading {db.total_verbs} verbs")
