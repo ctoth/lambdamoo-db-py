@@ -42,8 +42,8 @@ class TestWaifWriterBasics:
         writer.writeValue(WaifReference(0))
 
         content = output.getvalue()
-        # Definition format: "d {index}"
-        assert "d 0" in content
+        # Creation/definition format: "c {index}"
+        assert "c 0" in content
 
     def test_write_waif_reference_format(self):
         """Second write of same waif should produce reference format."""
@@ -186,9 +186,9 @@ class TestMultipleWaifs:
         writer.writeValue(WaifReference(1))
 
         content = output.getvalue()
-        # Both should be definitions (different waifs)
-        assert "d 0" in content
-        assert "d 1" in content
+        # Both should be creations (different waifs)
+        assert "c 0" in content
+        assert "c 1" in content
 
     def test_write_same_waif_twice_produces_ref(self):
         """Writing same waif twice: first def, second ref."""
@@ -203,6 +203,6 @@ class TestMultipleWaifs:
         writer.writeValue(WaifReference(0))
 
         content = output.getvalue()
-        # Should have one definition and one reference
-        assert content.count("d 0") == 1
+        # Should have one creation and one reference
+        assert content.count("c 0") == 1
         assert content.count("r 0") == 1

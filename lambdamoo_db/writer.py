@@ -117,8 +117,8 @@ class Writer:
             self._written_waifs.add(index)
             waif = self.db.waifs[index]
 
-            # Header: "d {index}"
-            self.writeString(f"d {index}")
+            # Header: "c {index}" (c = creation/definition)
+            self.writeString(f"c {index}")
             # Class objnum
             self.writeInt(waif.waif_class)
             self.write("\n")
