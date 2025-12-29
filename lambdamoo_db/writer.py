@@ -234,7 +234,7 @@ class Writer:
         # Write total count (includes recycled slots)
         self.writeInt(self.db.total_objects)
         self.write("\n")
-        # Write objects in order, including recycled placeholders
+        # Write regular objects in order, including recycled placeholders
         for obj_id in range(self.db.total_objects):
             if obj_id in self.db.recycled_objects:
                 self.writeString(f"# {obj_id} recycled")
@@ -242,6 +242,21 @@ class Writer:
                 self.writeObject(self.db.objects[obj_id])
             else:
                 raise ValueError(f"Object {obj_id} missing and not marked recycled")
+
+        # Write anonymous objects (those with anon=True or id >= total_objects)
+        anon_objects = [
+            obj for obj in self.db.objects.values()
+            if getattr(obj, 'anon', False) or obj.id >= self.db.total_objects
+        ]
+
+        if anon_objects:
+            # Write count of anon objects
+            self.writeInt(len(anon_objects))
+            self.write("\n")
+            # Write each anon object
+            for obj in sorted(anon_objects, key=lambda o: o.id):
+                self.writeObject(obj)
+
         # Write 0 to signal end of anonymous objects
         self.writeInt(0)
         self.write("\n")
