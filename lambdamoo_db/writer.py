@@ -1,6 +1,7 @@
 from io import TextIOWrapper
 from typing import Any, SupportsInt
 
+import attrs
 from attrs import asdict, define
 
 from lambdamoo_db.enums import MooTypes
@@ -20,6 +21,8 @@ from .database import (
     QueuedTask,
     SuspendedTask,
     Verb,
+    Waif,
+    WaifReference,
 )
 
 
@@ -27,6 +30,7 @@ from .database import (
 class Writer:
     db: MooDatabase
     output_file: TextIOWrapper
+    _written_waifs: set = attrs.field(factory=set)
 
     def write(self, text: str) -> None:
         self.output_file.write(text)
@@ -100,6 +104,41 @@ class Writer:
             self.writeValue(key)
             self.writeValue(value)
 
+    def writeWaif(self, waif_ref: WaifReference) -> None:
+        """Write a waif - definition on first write, reference on subsequent."""
+        index = waif_ref.index
+
+        if index in self._written_waifs:
+            # Reference format: "r {index}\n.\n"
+            self.writeString(f"r {index}")
+            self.writeString(".")
+        else:
+            # Definition format
+            self._written_waifs.add(index)
+            waif = self.db.waifs[index]
+
+            # Header: "d {index}"
+            self.writeString(f"d {index}")
+            # Class objnum
+            self.writeInt(waif.waif_class)
+            self.write("\n")
+            # Owner objnum
+            self.writeInt(waif.owner)
+            self.write("\n")
+            # propdefs_length (number of properties)
+            self.writeInt(len(waif.props))
+            self.write("\n")
+            # Property slot indices and values
+            for slot_idx, prop_value in enumerate(waif.props):
+                self.writeInt(slot_idx)
+                self.write("\n")
+                self.writeValue(prop_value)
+            # Terminator: -1
+            self.writeInt(-1)
+            self.write("\n")
+            # End marker
+            self.writeString(".")
+
     def writeList(self, lst: list[Any]) -> None:
         """Write a type-tagged list."""
         self.writeInt(MooTypes.LIST)
@@ -157,6 +196,10 @@ class Writer:
         elif v is None:
             self.writeInt(MooTypes.NONE)
             self.write("\n")
+        elif isinstance(v, WaifReference):
+            self.writeInt(MooTypes.WAIF)
+            self.write("\n")
+            self.writeWaif(v)
         elif isinstance(v, SupportsInt):
             self.writeInt(MooTypes.INT)
             self.write("\n")
