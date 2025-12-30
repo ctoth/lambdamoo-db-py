@@ -6,8 +6,8 @@ from typing import Any, NoReturn, Pattern, Union
 import parse
 
 from . import templates
-from .database import (CLEAR, VM, Activation, Anon, MooDatabase, MooError,
-                       MooObject, ObjNum, Property, QueuedTask, SuspendedTask,
+from .database import (CLEAR, VM, Activation, Anon, InterruptedTask, MooCatch, MooDatabase, MooError,
+                       MooFinally, MooObject, ObjNum, Property, QueuedTask, SuspendedTask,
                        Verb, Waif, WaifReference)
 from .enums import DBVersions, MooTypes, PropertyFlags
 
@@ -16,9 +16,22 @@ logger = getLogger(__name__)
 
 def load(filename: str) -> MooDatabase:
     """Load a database from a file"""
+    # Detect line endings by reading first few bytes
+    with open(filename, "rb") as f:
+        chunk = f.read(1000)
+        if b'\r\n' in chunk:
+            line_ending = '\r\n'
+        elif b'\n' in chunk:
+            line_ending = '\n'
+        else:
+            line_ending = '\n'  # Default
+
+    # Open in text mode for parsing
     with open(filename, "r", encoding="latin-1") as f:
         r = Reader(f, filename)
-        return r.parse()
+        db = r.parse()
+        db.line_ending = line_ending
+        return db
 
 
 def compile_re(template: str) -> Pattern[str]:
@@ -36,11 +49,13 @@ taskHeaderRe = compile_re(templates.task_header)
 activationHeaderRe = compile_re(templates.activation_header)
 pendingValueRe = compile_re(templates.pending_values_count)
 suspendedTaskCountRe = compile_re(templates.suspended_task_count)
-suspendedTaskHeaderRe = compile_re(templates.suspended_task_header)
+# Use raw regex for suspended task header - the parse template was broken
+# Format: "startTime id [value_type]" where value_type is optional
+suspendedTaskHeaderRe = re.compile(r"(?P<startTime>\d+) (?P<id>\d+)(?: (?P<value>\d+))?")
 interruptedTaskCountRe = compile_re(templates.interrupted_task_count)
 interruptedTaskHeaderRe = re.compile(r"(?P<id>\d+) (?P<status>[\w\W]+)")
 vmHeaderRe = compile_re(templates.vm_header)
-connectionCountRe = re.compile(r"(?P<count>\d+) active connections(?P<listener_tag>| with listeners)")
+connectionCountRe = re.compile(r"(?P<count>\d+) active connections(?P<listener_tag> with listeners|)")
 langverRe = compile_re(templates.langver)
 stackheaderRe = compile_re(templates.stack_header)
 pcRe = compile_re(templates.pc)
@@ -103,39 +118,67 @@ class Reader:
         self.readVerbs(db)
 
     def readValue(self, db: MooDatabase, *, known_type: int | None = None) -> Any:
+        line_at_start = self.line
         if known_type is not None:
             val_type = known_type
         else:
             val_type = self.readInt()
+
         match val_type:
             case MooTypes.STR:
-                return self.readString()
+                result = self.readString()
+                logger.debug(f"  [TYPE_STR @ line {line_at_start}] = {result!r}")
+                return result
             case MooTypes.OBJ:
-                return self.readObjnum()
+                result = self.readObjnum()
+                logger.debug(f"  [TYPE_OBJ @ line {line_at_start}] = #{result}")
+                return result
             case MooTypes.ANON:
-                return self.readAnon(db)
+                result = self.readAnon(db)
+                logger.debug(f"  [TYPE_ANON @ line {line_at_start}] = {result}")
+                return result
             case MooTypes.INT:
-                return self.readInt()
+                result = self.readInt()
+                logger.debug(f"  [TYPE_INT @ line {line_at_start}] = {result}")
+                return result
             case MooTypes.FLOAT:
-                return self.readFloat()
+                result = self.readFloat()
+                logger.debug(f"  [TYPE_FLOAT @ line {line_at_start}] = {result}")
+                return result
             case MooTypes.ERR:
-                return self.readErr()
+                result = self.readErr()
+                logger.debug(f"  [TYPE_ERR @ line {line_at_start}] = {result}")
+                return result
             case MooTypes.LIST:
-                return self.readList(db)
+                result = self.readList(db)
+                logger.debug(f"  [TYPE_LIST @ line {line_at_start}] count={len(result)}")
+                return result
             case MooTypes.CLEAR:
+                logger.debug(f"  [TYPE_CLEAR @ line {line_at_start}]")
                 return CLEAR
             case MooTypes.NONE:
+                logger.debug(f"  [TYPE_NONE @ line {line_at_start}]")
                 return None
             case MooTypes.MAP:
-                return self.readMap(db)
+                result = self.readMap(db)
+                logger.debug(f"  [TYPE_MAP @ line {line_at_start}] count={len(result)}")
+                return result
             case MooTypes.BOOL:
-                return self.readBool()
+                result = self.readBool()
+                logger.debug(f"  [TYPE_BOOL @ line {line_at_start}] = {result}")
+                return result
             case MooTypes._CATCH:
-                return self.readInt()
+                result = MooCatch(self.readInt())
+                logger.debug(f"  [TYPE_CATCH @ line {line_at_start}] = {result}")
+                return result
             case MooTypes._FINALLY:
-                return self.readInt()
+                result = MooFinally(self.readInt())
+                logger.debug(f"  [TYPE_FINALLY @ line {line_at_start}] = {result}")
+                return result
             case MooTypes.WAIF:
-                return self.readWaif(db)
+                result = self.readWaif(db)
+                logger.debug(f"  [TYPE_WAIF @ line {line_at_start}] = {result}")
+                return result
             case _:
                 self.parse_error(f"unknown type {val_type}")
 
@@ -190,17 +233,19 @@ class Reader:
 
         _class = self.readObjnum()
         owner = self.readObjnum()
-        props = []
-        new = Waif(_class, owner, props)
+        props = []  # Will store (slot_index, value) tuples
         propdefs_length = self.readInt()
+        new = Waif(_class, owner, props, propdefs_length)
 
         db.waifs[index] = new
         while (cur := self.readInt()) < 3 * 32 and cur > -1:
-            props.append(self.readValue(db))
+            value = self.readValue(db)
+            props.append((cur, value))  # Store as (slot_index, value) tuple
         _terminator = self.readString()
         return WaifReference(index)
 
     def readObject_v4(self, db: MooDatabase) -> Union[MooObject, None]:
+        line_at_start = self.line
         objNumber = self.readString()
         if not objNumber.startswith("#"):
             self.parse_error("object number does not have #")
@@ -214,14 +259,20 @@ class Reader:
             return None
 
         oid = int(objNumber[1:])
+        logger.debug(f"Reading object #{oid} at line {line_at_start}")
         name = self.readString()
+        logger.debug(f"  name = {name!r}")
         self.readString()  # blankline
         flags = self.readInt()
+        logger.debug(f"  flags = {flags}")
         owner = self.readObjnum()
+        logger.debug(f"  owner = #{owner}")
         location = self.readObjnum()
+        logger.debug(f"  location = #{location}")
         firstContent = self.readInt()
         neighbor = self.readInt()
         parent = self.readObjnum()
+        logger.debug(f"  parent = #{parent}")
         firstChild = self.readInt()
         sibling = self.readInt()
         obj = MooObject(
@@ -233,14 +284,16 @@ class Reader:
             parents=[parent],
         )
         numVerbs = self.readInt()
+        logger.debug(f"  verbs count = {numVerbs}")
         for _ in range(numVerbs):
             self.readVerbMetadata(obj)
 
         self.readProperties(db, obj)
-        logger.debug(f"Read object {oid} {obj.name}")
+        logger.debug(f"Completed reading object #{oid} {obj.name!r}")
         return obj
 
     def readObject_ng(self, db: MooDatabase) -> Union[MooObject, None]:
+        line_at_start = self.line
         objNumber = self.readString()
         if not objNumber.startswith("#"):
             self.parse_error("object number does not have #")
@@ -254,43 +307,53 @@ class Reader:
             return None
 
         oid = int(objNumber[1:])
+        logger.debug(f"Reading object #{oid} at line {line_at_start}")
         name = self.readString()
+        logger.debug(f"  name = {name!r}")
         flags = self.readInt()
+        logger.debug(f"  flags = {flags}")
         owner = self.readObjnum()
+        logger.debug(f"  owner = #{owner}")
         location = self.readValue(db)
+        logger.debug(f"  location = {location}")
         last_move = -1
         if db.version >= DBVersions.DBV_Last_Move:
             last_move = self.readValue(db)
+            logger.debug(f"  last_move = {last_move}")
 
         contents = self.readValue(db)
+        logger.debug(f"  contents = {contents}")
         parents = self.readValue(db)
         if not isinstance(parents, list):
             parents = [parents]
+        logger.debug(f"  parents = {parents}")
         children = self.readValue(db)
+        logger.debug(f"  children = {children}")
         obj = MooObject(oid, name, flags, owner, location, parents)
         obj.last_move = last_move
         obj.contents = contents
         obj.children = children
         numVerbs = self.readInt()
+        logger.debug(f"  verbs count = {numVerbs}")
         for _ in range(numVerbs):
             self.readVerbMetadata(obj)
 
         self.readProperties(db, obj)
-        logger.debug(f"Read object {oid} {obj.name}")
+        logger.debug(f"Completed reading object #{oid} {obj.name!r}")
         return obj
 
-    def readAnon(self, db: MooDatabase) -> None:
+    def readAnon(self, db: MooDatabase) -> Anon:
         oid = self.readInt()
-        if oid == -1:
-            self.parse_error("Not sure what to do with a -1 anon yet")
-        else:
-            return Anon(oid)
+        return Anon(oid)  # Anon(-1) represents null anon reference
 
     def readConnections(self, db: MooDatabase) -> None:
         headerMatch = self._read_and_match(connectionCountRe, "Bad active connections header line")
         count = int(headerMatch.group("count"))
-        self._read_and_process_items(db, count, lambda _: self.readString())
-        # Read and discard `count` lines; this data is useless to us.
+        # Store the listener_tag string directly (e.g., " with listeners" or "")
+        db.connections_with_listeners = headerMatch.group("listener_tag")
+        # Store connection lines for roundtrip
+        for _ in range(count):
+            db.connections.append(self.readString())
 
     def tryReadConnections(self, db: MooDatabase) -> bool:
         """Try to read connections section if present. Returns True if found."""
@@ -401,22 +464,28 @@ class Reader:
         obj.verbs.append(verb)
 
     def readProperties(self, db: MooDatabase, obj: MooObject):
-        logger.debug(f"Reading properties for {obj.id} {obj.name}")
+        logger.debug(f"Reading properties for #{obj.id} {obj.name!r}")
         # propdefs_count = properties DEFINED on this object (with names)
         propdefs_count = self.readInt()
         obj.propdefs_count = propdefs_count
+        logger.debug(f"  propdefs_count = {propdefs_count}")
         propertyNames = []
-        for _ in range(propdefs_count):
-            propertyNames.append(self.readString())
+        for i in range(propdefs_count):
+            name = self.readString()
+            propertyNames.append(name)
+            logger.debug(f"  propdef[{i}] name = {name!r}")
         # nval = total property VALUES (defined + inherited)
         nval = self.readInt()
-        for _ in range(nval):
+        logger.debug(f"  total properties (nval) = {nval}")
+        for idx in range(nval):
             propertyName = None
             if propertyNames:
                 propertyName = propertyNames.pop(0)
+            logger.debug(f"  property[{idx}] name = {propertyName!r}")
             value = self.readValue(db)
             owner = self.readObjnum()
             perms = PropertyFlags(self.readInt())
+            logger.debug(f"    owner=#{owner}, perms={perms}")
             property = Property(propertyName, value, owner, perms)
             obj.properties.append(property)
 
@@ -520,13 +589,17 @@ class Reader:
         activation = self.read_activation_as_pi(db)
         activation.stack = stack
         activation.code = code
-        activation.stack = stack
-        _temp = self.readValue(db)
+        activation.rtEnv = rt  # Store runtime environment
+        temp_end = self.readValue(db)
+        activation.temp_end = temp_end  # Store trailing temp value
         pchead = self.readString()
         if not (pcMatch := pcRe.match(pchead)):
             self.parse_error("READ_ACTIV: bad pc")
-        if int(pcMatch.group("bi_func")):
-            func_name = self.readString()
+        activation.pc = int(pcMatch.group("pc"))
+        activation.bi_func = int(pcMatch.group("bi_func"))
+        activation.error = int(pcMatch.group("error"))
+        if activation.bi_func:
+            activation.bi_func_name = self.readString()
         return activation
 
     def readRTEnv(self, db: MooDatabase) -> dict[str, Any]:
@@ -562,10 +635,11 @@ class Reader:
 
     def readInterruptedTask(self, db: MooDatabase) -> None:
         headerMatch = self._read_and_match(interruptedTaskHeaderRe, "Bad interrupted tasks header")
-        task_id = headerMatch.group("id")
-        vm = self.readVM(db)
-        # Shrug
-        return None
+        task_id = int(headerMatch.group("id"))
+        status = headerMatch.group("status")
+        task = InterruptedTask(task_id, status)
+        task.vm = self.readVM(db)
+        db.interruptedTasks.append(task)
 
     def readVM(self, db: MooDatabase) -> VM:
         if db.version >= DBVersions.DBV_TaskLocal:
@@ -577,10 +651,13 @@ class Reader:
         if not headerMatch:
             self.parse_error(f"Bad VM Header {header}")
         top = int(headerMatch.group("top"))
+        vector = int(headerMatch.group("vector"))
+        funcId = int(headerMatch.group("funcId"))
+        maxStackframes = int(headerMatch.group("maxStackframes"))
         stack = []
         for _ in range(top + 1):
             stack.append(self.read_activation(db))
-        return VM(local, stack)
+        return VM(local, stack, top, vector, funcId, maxStackframes)
 
     def _read_and_match(self, pattern, error_message):
         line = self.readString()

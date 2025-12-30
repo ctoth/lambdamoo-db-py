@@ -20,6 +20,16 @@ class MooError(int):
     pass
 
 
+class MooCatch(int):
+    """Wrapper for MOO _CATCH values to preserve type during roundtrip."""
+    pass
+
+
+class MooFinally(int):
+    """Wrapper for MOO _FINALLY values to preserve type during roundtrip."""
+    pass
+
+
 class Clear:
     """Sentinel for TYPE_CLEAR values (distinct from None/TYPE_NONE)."""
     _instance = None
@@ -75,6 +85,8 @@ class MooObject:
     def parent(self) -> int:
         if len(self.parents) > 1:
             raise Exception("Object has multiple parents")
+        if not self.parents:
+            return -1  # No parent
         return self.parents[0]
 
 
@@ -82,7 +94,8 @@ class MooObject:
 class Waif:
     waif_class: int
     owner: int
-    props: list[Any]
+    props: list[Any]  # List of (slot_index, value) tuples for roundtrip
+    propdefs_length: int = attrs.field(default=0)  # Original propdefs_length for roundtrip
 
 
 @attrs.define()
@@ -110,12 +123,24 @@ class Activation:
     temp_value: Any = attrs.field(init=False, default=None)  # First value (often discarded)
     temp_this: Any = attrs.field(init=False, default=None)   # Pre-header this (with type)
     temp_vloc: Any = attrs.field(init=False, default=None)   # Pre-header vloc (with type)
+    # For full activations (suspended tasks) - additional roundtrip fields
+    rtEnv: dict[str, Any] = attrs.field(init=False, factory=dict)  # Runtime environment
+    temp_end: Any = attrs.field(init=False, default=None)  # Temp value after PI header
+    pc: int = attrs.field(init=False, default=0)  # Program counter
+    bi_func: int = attrs.field(init=False, default=0)  # Built-in function flag
+    error: int = attrs.field(init=False, default=0)  # Error value
+    bi_func_name: str | None = attrs.field(init=False, default=None)  # Built-in function name
 
 
 @attrs.define()
 class VM:
     locals: dict
     stack: list[Activation | None]
+    # VM header fields for roundtrip fidelity
+    top: int = attrs.field(default=0)
+    vector: int = attrs.field(default=0)
+    funcId: int = attrs.field(default=0)
+    maxStackframes: int = attrs.field(default=50)
 
 
 @attrs.define()
@@ -134,8 +159,15 @@ class QueuedTask:
 class SuspendedTask:
     firstLineno: int
     id: int
-    st: int
+    startTime: int
     value: Any = attrs.field(init=False, default=None)
+    vm: VM = attrs.field(init=False, default=None)
+
+
+@attrs.define()
+class InterruptedTask:
+    id: int
+    status: str
     vm: VM = attrs.field(init=False, default=None)
 
 
@@ -162,9 +194,14 @@ class MooDatabase:
     objects: dict[int, MooObject] = attrs.field(factory=dict)
     queuedTasks: list[QueuedTask] = attrs.field(factory=list)
     suspendedTasks: list[SuspendedTask] = attrs.field(factory=list)
+    interruptedTasks: list[InterruptedTask] = attrs.field(factory=list)
     waifs: dict[int, Waif] = attrs.field(factory=dict)
     players: list[int] = attrs.field(factory=list)
     recycled_objects: set[int] = attrs.field(factory=set)
+    pending_anon_ids: list[int] = attrs.field(factory=list)  # For pre-creating anons in pending section
+    connections: list[str] = attrs.field(factory=list)  # Connection lines for roundtrip
+    connections_with_listeners: str = attrs.field(default=" with listeners")  # Listener tag suffix
+    line_ending: str = attrs.field(default="\n")  # Line ending style for roundtrip (\n or \r\n)
 
     def all_verbs(self) -> Generator[Verb, None, None]:
         for obj in self.objects.values():
