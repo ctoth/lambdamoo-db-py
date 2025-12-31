@@ -10,24 +10,59 @@ class ObjNum(int):
     def __repr__(self):
         return f"ObjNum({int(self)})"
 
+    def __eq__(self, other):
+        if type(other) is not ObjNum:
+            return False
+        return int(self) == int(other)
+
+    def __hash__(self):
+        return hash(('objnum', int(self)))
+
 
 class Anon(int):
-    pass
+    def __repr__(self):
+        return f"Anon({int(self)})"
+
+    def __eq__(self, other):
+        if type(other) is not Anon:
+            return False
+        return int(self) == int(other)
+
+    def __hash__(self):
+        return hash(('anon', int(self)))
 
 
 class MooError(int):
     """Wrapper for MOO error values (TYPE_ERR)."""
-    pass
+    def __eq__(self, other):
+        if type(other) is not MooError:
+            return False
+        return int(self) == int(other)
+
+    def __hash__(self):
+        return hash(('error', int(self)))
 
 
 class MooCatch(int):
     """Wrapper for MOO _CATCH values to preserve type during roundtrip."""
-    pass
+    def __eq__(self, other):
+        if type(other) is not MooCatch:
+            return False
+        return int(self) == int(other)
+
+    def __hash__(self):
+        return hash(('catch', int(self)))
 
 
 class MooFinally(int):
     """Wrapper for MOO _FINALLY values to preserve type during roundtrip."""
-    pass
+    def __eq__(self, other):
+        if type(other) is not MooFinally:
+            return False
+        return int(self) == int(other)
+
+    def __hash__(self):
+        return hash(('finally', int(self)))
 
 
 class Clear:
