@@ -133,8 +133,9 @@ class Waif:
     propdefs_length: int = attrs.field(default=0)  # Original propdefs_length for roundtrip
 
 
-@attrs.define()
+@attrs.define(frozen=True)
 class WaifReference:
+    """Reference to a waif by index. Frozen to be hashable (used as map keys)."""
     index: int
 
 
