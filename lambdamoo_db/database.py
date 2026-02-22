@@ -11,12 +11,12 @@ class ObjNum(int):
         return f"ObjNum({int(self)})"
 
     def __eq__(self, other):
-        if type(other) is not ObjNum:
-            return False
-        return int(self) == int(other)
+        if isinstance(other, int):
+            return int(self) == int(other)
+        return NotImplemented
 
     def __hash__(self):
-        return hash(('objnum', int(self)))
+        return hash(int(self))
 
 
 class Anon(int):
@@ -24,45 +24,45 @@ class Anon(int):
         return f"Anon({int(self)})"
 
     def __eq__(self, other):
-        if type(other) is not Anon:
-            return False
-        return int(self) == int(other)
+        if isinstance(other, int):
+            return int(self) == int(other)
+        return NotImplemented
 
     def __hash__(self):
-        return hash(('anon', int(self)))
+        return hash(int(self))
 
 
 class MooError(int):
     """Wrapper for MOO error values (TYPE_ERR)."""
     def __eq__(self, other):
-        if type(other) is not MooError:
-            return False
-        return int(self) == int(other)
+        if isinstance(other, int):
+            return int(self) == int(other)
+        return NotImplemented
 
     def __hash__(self):
-        return hash(('error', int(self)))
+        return hash(int(self))
 
 
 class MooCatch(int):
     """Wrapper for MOO _CATCH values to preserve type during roundtrip."""
     def __eq__(self, other):
-        if type(other) is not MooCatch:
-            return False
-        return int(self) == int(other)
+        if isinstance(other, int):
+            return int(self) == int(other)
+        return NotImplemented
 
     def __hash__(self):
-        return hash(('catch', int(self)))
+        return hash(int(self))
 
 
 class MooFinally(int):
     """Wrapper for MOO _FINALLY values to preserve type during roundtrip."""
     def __eq__(self, other):
-        if type(other) is not MooFinally:
-            return False
-        return int(self) == int(other)
+        if isinstance(other, int):
+            return int(self) == int(other)
+        return NotImplemented
 
     def __hash__(self):
-        return hash(('finally', int(self)))
+        return hash(int(self))
 
 
 class Clear:
