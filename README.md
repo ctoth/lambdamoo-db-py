@@ -23,6 +23,9 @@ moodb prop '$httpd.port'       # effective value, following clear
 moodb grep -C 2 'notify('      # search all verb code
 moodb refs '$httpd'            # who points at #N, in properties and code
 moodb values '\.ogg$'          # where a string is stored, through lists, maps and waifs
+moodb values -F --objects-only 'opaque-identifier' # owning identities without values or map-key secrets
+moodb values -F --properties-only 'opaque-identifier' # owning properties without nested keys or values
+moodb values --object '#4' 'pattern' # restrict to a holder's own stored values
 ```
 
 ### References

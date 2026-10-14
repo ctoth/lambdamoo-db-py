@@ -682,15 +682,21 @@ def refs(ctx: click.Context, ref: tuple[str, ...], code_only: bool) -> None:
 @click.option("-i", "--ignore-case", is_flag=True, help="Case-insensitive match.")
 @click.option("-F", "--fixed-strings", is_flag=True, help="PATTERN is a literal string.")
 @click.option("--in-waif", "waif_class", metavar="REF", help="Only strings stored inside a waif of class REF or a descendant.")
+@click.option("--objects-only", is_flag=True, help="Print owning object identities once, without names, paths, map keys or values.")
+@click.option("--properties-only", is_flag=True, help="Print owning identity/property pairs once, without object labels, nested paths, map keys or values.")
+@click.option("--object", "object_ref", metavar="REF", help="Search only this object's own stored values.")
 @click.pass_context
-def values(ctx: click.Context, pattern: str, ignore_case: bool, fixed_strings: bool, waif_class: str | None) -> None:
+def values(ctx: click.Context, pattern: str, ignore_case: bool, fixed_strings: bool, waif_class: str | None, objects_only: bool, properties_only: bool, object_ref: str | None) -> None:
     """Search stored string values (Python regex): OBJ.prop[i]<waif #C>.slot = "text".
 
     Looks in every object's own property values, anonymous objects included,
     through lists and maps and into waifs, naming each waif slot. Inherited
     (clear) slots are not repeated on descendants.
     """
+    if objects_only and properties_only:
+        raise click.UsageError("--objects-only and --properties-only are mutually exclusive")
     db, names = _db(ctx)
+    wanted_object = _object(db, object_ref) if object_ref is not None else None
     try:
         rx = re.compile(re.escape(pattern) if fixed_strings else pattern, re.IGNORECASE if ignore_case else 0)
     except re.error as e:
@@ -699,10 +705,20 @@ def values(ctx: click.Context, pattern: str, ignore_case: bool, fixed_strings: b
     if waif_class is not None:
         cls = _object(db, waif_class)
         wanted = {cls.id, *(d.id for d in descendants(db, cls))}
-    for hit in find_strings(db, rx):
+    seen = set()
+    for hit in find_strings(db, rx, object_id=wanted_object.id if wanted_object is not None else None):
+        if wanted_object is not None and hit.obj is not wanted_object:
+            continue
         if wanted is not None and not wanted.intersection(hit.waif_classes):
             continue
-        click.echo(f"{label(db, hit.obj.id, names)}{hit.where} = {moo_string(hit.value)}")
+        if objects_only or properties_only:
+            identity = (hit.obj.anon, hit.obj.id, hit.property_name if properties_only else "")
+            if identity not in seen:
+                seen.add(identity)
+                owner = f"anonymous:{hit.obj.id}" if hit.obj.anon else f"#{hit.obj.id}"
+                click.echo(f"{owner}.{hit.property_name}" if properties_only else owner)
+        else:
+            click.echo(f"{label(db, hit.obj.id, names)}{hit.where} = {moo_string(hit.value)}")
 
 
 def _tree(ctx: click.Context, ref: str, field: str, recursive: bool, summary: bool, output_format: str) -> None:

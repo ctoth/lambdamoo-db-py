@@ -658,9 +658,10 @@ class StoredString:
     where: str  # ".prop[2]<waif #3010>.snd"; list indexes are 1-based like MOO
     value: str
     waif_classes: tuple[int, ...]  # classes of the waifs passed through, outermost first
+    property_name: str = ""  # owning property, without nested map keys or values
 
 
-def find_strings(db: MooDatabase, pattern: re.Pattern[str]) -> Iterator[StoredString]:
+def find_strings(db: MooDatabase, pattern: re.Pattern[str], *, object_id: int | None = None) -> Iterator[StoredString]:
     """Every stored string matching ``pattern``, with the path to it.
 
     Searches each object's own (non-clear) property slots, anonymous objects
@@ -694,13 +695,15 @@ def find_strings(db: MooDatabase, pattern: re.Pattern[str]) -> Iterator[StoredSt
                 yield from walk(item, f"{where}<waif #{cls}>.{name}", (*classes, cls), open_waifs | {value.index})
 
     for obj in db.objects.values():
+        if object_id is not None and obj.id != object_id:
+            continue
         names = [p.propertyName for a in db.ancestors(obj) for p in own_properties(a)]
         for index, prop in enumerate(obj.properties):
             if prop.value is CLEAR:
                 continue
             name = names[index] if index < len(names) else f"slot{index}"
             for where, value, classes in walk(prop.value, f".{name}", (), frozenset()):
-                yield StoredString(obj, where, value, classes)
+                yield StoredString(obj, where, value, classes, name)
 
 
 # --------------------------------------------------------------------------

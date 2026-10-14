@@ -83,3 +83,35 @@ def test_cli_values():
     assert r.exit_code == 2 and "Invalid value for PATTERN" in r.output
     r = run("values", "x", "--in-waif", "#999999")
     assert r.exit_code == 1 and "does not exist" in r.output
+
+
+def test_cli_values_objects_only_hides_labels_paths_and_values(monkeypatch):
+    import lambdamoo_db.cli as cli
+
+    db = waif_db()
+    db.objects[4].name = "private-object-label"
+    monkeypatch.setattr(cli, "_db", lambda _ctx: (db, {}))
+    r = CliRunner().invoke(moodb, ["values", "ogg|creak|spare", "--objects-only"])
+    assert r.exit_code == 0, r.output
+    assert r.output == "#4\nanonymous:6\n"
+    assert "private-object-label" not in r.output
+    assert "Old Key.ogg" not in r.output
+    assert "Warp Loop.ogg" not in r.output
+
+    r = CliRunner().invoke(moodb, ["values", "ogg", "--objects-only", "--in-waif", "#2"])
+    assert r.exit_code == 0, r.output
+    assert r.output == "#4\nanonymous:6\n"
+
+    r = CliRunner().invoke(moodb, ["values", "ogg|creak|spare", "--properties-only", "--object", "#4"])
+    assert r.exit_code == 0, r.output
+    assert r.output == "#4.systems\n#4.note\n"
+    assert "Old Key.ogg" not in r.output
+    assert "Warp Loop.ogg" not in r.output
+    assert "private-object-label" not in r.output
+    assert CliRunner().invoke(moodb, ["values", "x", "--objects-only", "--properties-only"]).exit_code == 2
+
+
+def test_find_strings_preserves_owning_property_metadata():
+    found = list(find_strings(waif_db(), re.compile("ogg|creak|spare")))
+    assert [h.property_name for h in found] == ["systems", "systems", "note", "note", "held"]
+    assert [h.obj.id for h in find_strings(waif_db(), re.compile("ogg"), object_id=6)] == [6]
